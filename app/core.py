@@ -25,9 +25,27 @@ general logic is as follows:
 
 class ZTPCore(object):
 
-  def __init__(self):
+  def __init__(self, ztp_basedir, client_file):
+    '''
+    init method does the following:
+    - Populates basedir attribute
+    - Reads client map file
+    - Builds dicts:
+      self.clients - keyed on client IP
+      self.roles - keyed on role name
+      self.templates - j2 templates keyed on role name
+    '''
+
+    # Add dir path to basedir, will save us from
+    # having to do this every time later
+    if ztp_basedir[-1] != '/':
+      ztp_basedir = ztp_basedir + '/'
+
+    self.ztp_basedir = ztp_basedir
+    self.client_path = ztp_basedir + client_file
+
     try:
-      with open(CLIENT_MAP_FILE) as f:
+      with open(self.client_path) as f:
         try:
           client_map = yaml.load(f)
 
@@ -44,30 +62,31 @@ class ZTPCore(object):
     config.
     '''
     self.clients = {}
-    for client in client_map['clients']:
-      if 'ip4_addr' in client:
-        self.clients[client['ip4_addr']] = client
-      if 'ip6_addr' in client:
-        self.clients[client['ip6_addr']] = client
-
     try:
-      roles = client_map['roles']
+      for client in client_map['clients']:
+        if 'ip4_addr' in client:
+          self.clients[client['ip4_addr']] = client
+        if 'ip6_addr' in client:
+          self.clients[client['ip6_addr']] = client
+
+      self.roles = {}
+      for role in client_map['roles']:
+        if 'name' in role:
+          self.roles[role['name']] = role
 
     except KeyError:
-      sys.exit('No \'roles\' key found in configuration file.')
+      sys.exit('No \'{}\' key found in client configuration file.'.format(e))
 
-    self.templates = self._load_templates(roles)
-
-    #pdb.set_trace()
+    # Preload j2 templates
+    self.templates = self._load_templates(self.roles)
 
   def _load_templates(self, roles):
     # Build dictionary of role name and matching template
     template_map = {}
-    #pdb.set_trace()
-    for role in roles:
+    for role in roles.values():
       try:
         name = role['name']
-        template_path = ZTP_BASEDIR + role['template_name']
+        template_path = self.ztp_basedir + role['template_file']
         with open(template_path) as f:
           template_map[name] = f.read()
 
@@ -84,29 +103,28 @@ class ZTPCore(object):
     try:
       client = self.clients[remote_addr]
 
-    except KeyError:
+    except KeyError as e:
       raise ZTPClientNotFoundError('Client IP Address is not recognized.')
 
     # Get role data
     try:
-      return self.roles[client['role']]   
+      return self.roles[client['role']]
 
-    except KeyError:
-      raise ZTPMalformedClientException('Could not load role {}'.format([client['role']])
+    except KeyError as e:
+      raise ZTPMalformedClientException('Could not load role {}'.format([client['role']]))
 
   def render(self, remote_addr):
-    #pdb.set_trace()
     # Look up client IP, get template and load YAML
     try:
       client = self.clients[remote_addr]
-    except KeyError:
+    except KeyError as e:
       raise ZTPClientNotFoundError('Client IP Address is not recognized.')
 
     # Can we load the YAML data?
     try:
-      yaml_path = ZTP_BASEDIR + client['facts_file']
-      template = self.templates[self._role_lookup(remote_addr)[template_file]]
-    except KeyError:
+      yaml_path = self.ztp_basedir + client['facts_file']
+      template = self.templates[self._role_lookup(remote_addr)['name']]
+    except KeyError as e:
       raise ZTPMalformedClientRecordException('Could not find role or facts file.')
 
     # Load facts YAML file
@@ -129,5 +147,40 @@ class ZTPCore(object):
       raise ZTPRenderingError('Could not render template for host {}: {}'.format(client['name'], e))
 
   def bootstrap(self, remote_addr):
+
+    #pdb.set_trace()
     # Look up bootstrap script file from role
+    role_data = self._role_lookup(remote_addr)
+
+    try:
+      bootstrap_path = self.ztp_basedir + role_data['bootstrap_file']
+      with open(bootstrap_path, 'rb') as f:
+        bootstrap_file = f.read()
+
+      return bootstrap_file
+
+    except KeyError as e:
+      raise ZTPError('Role \'{}\'does not contain bootstrap file'.format(role_data['name']))
+
+    except IOError as e:
+      raise ZTPError('Error reading bootstrap file: {}'.format(e))
+
+  def software(self, remote_addr):
+
+    #pdb.set_trace()
+    # Look up bootstrap script file from role
+    role_data = self._role_lookup(remote_addr)
+
+    try:
+      software_path = self.ztp_basedir + role_data['software_file']
+      with open(software_path, 'rb') as f:
+        software_file = f.read()
+
+      return software_file
     
+    except KeyError as e:
+      raise ZTPError('Role \'{}\'does not contain software file'.format(role_data['name']))
+
+    except IOError as e:
+      raise ZTPError('Error reading software file: {}'.format(e))
+
