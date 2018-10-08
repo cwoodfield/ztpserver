@@ -1,1 +1,1 @@
-Test ZTP Server.
+Test ZTP Server for Arista
