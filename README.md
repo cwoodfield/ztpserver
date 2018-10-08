@@ -1,2 +1,1 @@
-Test ZTP Serveri. xxxx for Arista
-
+Test ZTP Server, currently supporting Arista EOS.
